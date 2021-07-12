@@ -16,7 +16,9 @@ MSP432在官方给出的常用编程方案有四种：IAR、KEIL、GCC和CCS。�
 
 ![image-20210710150740341](../pic/START/image-20210710150740341.png)
 
-关于我的CCS工作栏是中文的，是因为我安装了eclipse的中文插件，如有希望修改的朋友可以参考这篇文章的汉化部分（这是针对cubeide的安装教程，但因为cubeide和ccs都是基于eclipse设计的，而这个汉化包也仅针对eclipse的内容，故都可以使用）：https://wenku.baidu.com/view/3174bc36996648d7c1c708a1284ac850ad0204a6.html，不过需要注意的是，他给出的汉化包地址为`http://mirrors.ustc.edu.cn/eclipse/technology/babel/update-site/R0.17.0/2019-06/`，从URL不难看出这是2019的版本了，虽然只是汉化eclipse的部分可能无所谓，但是为了保险起见请将后面的版本部分删除，然后用浏览器去访问地址：`http://mirrors.ustc.edu.cn/eclipse/technology/babel/update-site/`，在我写下这个笔记的时候，可以得到如下界面：
+关于我的CCS工作栏是中文的，是因为我安装了eclipse的中文插件，如有希望修改的朋友可以参考这篇文章的汉化部分（这是针对cubeide的安装教程，但因为cubeide和ccs都是基于eclipse设计的，而这个汉化包也仅针对eclipse的内容，故都可以使用）：https://wenku.baidu.com/view/3174bc36996648d7c1c708a1284ac850ad0204a6.html
+
+不过需要注意的是，他给出的汉化包地址为`http://mirrors.ustc.edu.cn/eclipse/technology/babel/update-site/R0.17.0/2019-06/`，从URL不难看出这是2019的版本了，虽然只是汉化eclipse的部分可能无所谓，但是为了保险起见请将后面的版本部分删除，然后用浏览器去访问地址：`http://mirrors.ustc.edu.cn/eclipse/technology/babel/update-site/`，在我写下这个笔记的时候，可以得到如下界面：
 
 ![image-20210710151936315](../pic/START/image-20210710151936315.png)
 
