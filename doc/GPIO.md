@@ -148,5 +148,164 @@ void *mainThread(void *arg0)
 
 这个函数的功能从名字上就不难知道是设置GPIO的模式，相对于UART，它的地位类似于UART_Params_init和UART_Open的结合（其实只是Open部分，因为GPIO的配置不需要像UART那样一堆参数，所以它的参数是直接手动写的）。
 
-而对于这个函数的参数，第一个是index，这个在ti_drivers_config中，之前我们说过这种写法了，第二个参数就是它的功能了。
+而对于这个函数的参数，第一个是index，这个在ti_drivers_config中，之前我们说过这种写法了，第二个参数就是它的配置参数了。
+
+关于这个参数，可以参考GPIO.h的东西，当然直接看手册比较方便，实际上它就是一堆宏定义，可以通过按位与组合起来用于寄存器的配置。
+
+![image-20210712222734403](../pic/GPIO/image-20210712222734403.png)
+
+不要担心看着很长，他们的命名是有规律的。开头统一是GPIO，然后是CFG，如果是输出，就是OUTPUT（只有一个）或OUT，输入则是INPUT（只有一个）或IN，再往后如果是输出，则是推挽（STD，其实这里是标准的意思，不过它的标准就是推挽），和开漏（OD），接着是开漏输出分为无上下拉NOPULL、上拉PU和下拉PD，推挽根据驱动能力STR分为高HIGH、中MED、低LOW。至于输出最后两个则是代表了输出高电平或输出低电平。
+
+而输入分为普通输入和中断输入INT，其中普通输入可以选择上拉或下拉或无拉，中断则分为无中断NONE、下降沿中断FALLING、上升沿RISING、两端BOTH_EDGES、低电平LOW、高电平HIGH。
+
+除此之外还有特殊的配置，仅配置中断IN_INT_ONLY，和不要配置DO_NOT_CONFIG，不过我没想懂这两个有啥用，鉴于精力有限就不去深究了，感兴趣可以去自己看看源代码。
+
+### GPIO_write
+
+配置输出电平，第一个是index，第二个是1或0，它用的宏定义，1是高电平，0是低电平。
+
+### GPIO_setCallback
+
+设置回调函数，本质上和UART的uartCallback那个参数一样，就是用一个回调函数的指针，不过UART直接在打开Open的时候去配置，而这个是用专门的函数配置。
+
+### GPIO_enableInt
+
+使能中断，只有在中断使能后才可以触发，就像UART需要用read使能一样，但是GPIO不用在中断中重新使能。
+
+### GPIO_toggle
+
+这个是在中断回调中使用的函数，功能是翻转电平，高变低，低变高。
+
+## 小节
+
+事实上GPIO还有更多的功能，包括清除中断标志、关闭中断等等，这里不详述了，有了前面的功能我们已经够用了。如果感兴趣其它功能可以查看头文件或手册。
+
+## 封装BSP
+
+以下是封装内容，根据目前已经掌握的知识完全可以看懂。
+
+bsp_init.c
+
+```c
+/*************************************************************************************
+ * @Description  : 
+ * @Version      : 
+ * @Author       : YunWuHai
+ * @Date         : 2021-07-12 14:57:29
+ * @LastEditors  : YunWuHai
+ * @LastEditTime : 2021-07-12 16:48:47
+ * @FilePath     : \BSP\bsp_init.c
+ * @Copyright (C) 2021 YunWuHai. All rights reserved.
+ *************************************************************************************/
+#include "bsp_init.h"
+
+
+void __attribute__((weak)) leftButtonPush(uint_least8_t index)
+{
+    UART_write(PC_UART_Handle, "左键按下\r\n", sizeof("左键按下\r\n"));
+}
+
+void __attribute__((weak)) rightButtonPush(uint_least8_t index)
+{
+    UART_write(PC_UART_Handle, "右键按下\r\n", sizeof("右键按下\r\n"));
+}
+
+void __attribute__((weak)) UART0_Read_ISR(UART_Handle handle, void* buf, size_t size)
+{
+    UART_write(handle, buf, size);
+    UART_read(handle, buf, size);
+}
+
+uint8_t BSP_GPIO_Init(uint8_t maskOnLED)
+{
+    GPIO_init();
+
+    /* 初始化LED */
+    GPIO_setConfig(SINGLE_RED_LED, GPIO_CFG_OUT_STD | GPIO_CFG_OUT_LOW);
+    GPIO_setConfig(RGB_RED_LED, GPIO_CFG_OUT_STD | GPIO_CFG_OUT_LOW);
+    GPIO_setConfig(RGB_GREEN_LED, GPIO_CFG_OUT_STD | GPIO_CFG_OUT_LOW);
+    GPIO_setConfig(RGB_BLUE_LED, GPIO_CFG_OUT_STD | GPIO_CFG_OUT_LOW);
+
+    /* 当且仅当串口打开后可以开启按键中断，同时如果没有开启串口，灯光也不会直接亮起 */
+    if(PC_UART_Handle != NULL)  
+    {
+        GPIO_setCallback(LEFT_BUTTON, &leftButtonPush);
+        GPIO_setCallback(RIGHT_BUTTON, &rightButtonPush);
+        GPIO_enableInt(LEFT_BUTTON);
+        GPIO_enableInt(RIGHT_BUTTON);
+        if(maskOnLED & SINGLE_RED)GPIO_write(SINGLE_RED_LED, CONFIG_GPIO_LED_ON);
+        if(maskOnLED & RGB_RED)GPIO_write(RGB_RED_LED, CONFIG_GPIO_LED_ON);
+        if(maskOnLED & RGB_GREEN)GPIO_write(RGB_GREEN_LED, CONFIG_GPIO_LED_ON);
+        if(maskOnLED & RGB_BLUE)GPIO_write(RGB_BLUE_LED,CONFIG_GPIO_LED_ON);
+        return BSP_ALL_OK;
+    }
+    else
+    {
+        return BSP_BUTTON_ISR_ERROR;
+    }
+}
+
+void BSP_UART_Init(void)
+{
+    UART_Params uartParams;
+    
+    UART_init();
+
+    UART_Params_init(&uartParams);
+    uartParams.writeDataMode = UART_DATA_BINARY;
+    uartParams.readDataMode = UART_DATA_BINARY;
+    uartParams.readMode = UART_MODE_CALLBACK;
+    uartParams.readCallback = &UART0_Read_ISR;
+    uartParams.readReturnMode = UART_RETURN_FULL;
+    uartParams.readEcho = UART_ECHO_OFF;
+
+    PC_UART_Handle = UART_open(UART0, &uartParams);
+}
+
+```
+
+bsp_init.h
+
+```c
+/*************************************************************************************
+ * @Description  : 用于MSP432的板级的初始化
+ * @Version      : 
+ * @Author       : YunWuHai
+ * @Date         : 2021-07-12 14:58:17
+ * @LastEditors  : YunWuHai
+ * @LastEditTime : 2021-07-12 16:48:54
+ * @FilePath     : \BSP\bsp_init.h
+ * @Copyright (C) 2021 YunWuHai. All rights reserved.
+ *************************************************************************************/
+#ifndef _BSP_INIT_H_
+#define _BSP_INIT_H_
+
+#include <ti/drivers/GPIO.h>
+#include <ti/drivers/UART.h>
+#include "ti_drivers_config.h"
+
+#define BSP_ALL_OK              0
+#define BSP_BUTTON_ISR_ERROR    1
+
+#define SINGLE_RED  0x01
+#define RGB_RED     0x02
+#define RGB_GREEN   0x04
+#define RGB_BLUE    0x08
+
+UART_Handle huart0; // UART0的句柄
+#define PC_UART_Handle huart0
+
+uint8_t BSP_GPIO_Init(uint8_t maskOnLED);
+void BSP_UART_Init(void);
+
+#endif
+```
+
+在每次初始化的时候先调用BSP_UART_Init即可完成和仿真器相连的那个UART的配置，接着调用BSP_GPIO_Init即可完成GPIO的配置，其参数为启动阶段要亮的灯，同时如果UART开启失败，这个灯也不会亮。
+
+除此之外可以重定义三个中断回调弱函数leftButtonPush、rightButtonPush和UART0_Read_ISR。如果不重定义，则默认为回响程序。
+
+## 高级封装
+
+*天晚了，明天再写*
 
