@@ -20,7 +20,7 @@
 
 [WATCHDOG](./doc/WATCHDOG.md)
 
-
+[SPI](./doc/SPI.md)
 
 ##### 协议
 
