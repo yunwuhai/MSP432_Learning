@@ -16,6 +16,8 @@
 
 [PWM](./doc/PWM.md)
 
+[TIMER](./doc/TIMER.md)
+
 ##### 协议
 
 本项目遵守GPL协议
