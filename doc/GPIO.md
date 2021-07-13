@@ -307,5 +307,324 @@ void BSP_UART_Init(void);
 
 ## 高级封装
 
-*天晚了，明天再写*
+实际上我们上面的写法并不是特别优秀的写法，尤其是针对按键的部分，我们没有设计消抖之类的程序，这样导致最直接的结果就是我们在按键的时候可能因为硬件抖动而导致检测到多次按键。这个问题可以使用消抖电路来用硬件解决，那种方式比较简单但是对成本要求更高。而且针对已经做出来的开发板，让它重新修改电路显然不是一个很好的主意。但是如果自己来封装又感觉太麻烦，除了要写按键中断外还需要为其设计消抖程序，用到计时器等功能，于是TI便自己设计了一个库函数，把基础的按键检测功能综合了一下，制作了在TI-Driver中的Button库，这个库你可以在我们之前的driver文件夹中的app文件夹中找到。除此之外它还封装了一个LED库，可以比较简单地使用LED进行闪烁、变色等功能，现在我们来看看它的示例程序buttonled。
 
+和前面一样，我们不看申请RTOS的部分，直接看buttonled.c。
+
+```c
+/*
+ *    ======== buttonled.c ========
+ */
+#include <stdint.h>
+#include <stdbool.h>
+#include <unistd.h>
+
+/* Driver Header files */
+#include <ti/drivers/GPIO.h>
+#include <ti/display/Display.h>
+#include <ti/drivers/utils/RingBuf.h>
+#include <ti/drivers/apps/LED.h>
+#include <ti/drivers/apps/Button.h>
+
+/* Driver Configuration */
+#include "ti_drivers_config.h"
+
+#define BLINKCOUNT            3
+#define FASTBLINK             500
+#define SLOWBLINK             1000
+#define FIFTYMS               50000
+#define EVENTBUFSIZE          10
+
+
+#ifndef CONFIG_BUTTONCOUNT
+#define CONFIG_BUTTONCOUNT     2
+#endif
+
+#ifndef CONFIG_LEDCOUNT
+#define CONFIG_LEDCOUNT        2
+#else
+#define CONFIG_LED2            2
+#endif
+
+typedef struct buttonStats
+{
+    unsigned int pressed;
+    unsigned int clicked;
+    unsigned int released;
+    unsigned int longPress;
+    unsigned int longClicked;
+    unsigned int doubleclicked;
+    unsigned int lastpressedduration;
+} buttonStats;
+
+Button_Handle    buttonHandle[CONFIG_BUTTONCOUNT];
+LED_Handle       ledHandle[CONFIG_LEDCOUNT];
+Display_Handle   display;
+buttonStats      bStats;
+RingBuf_Object   ringObj;
+uint8_t          eventBuf[EVENTBUFSIZE];
+
+
+/*
+ *  ======== doEventLogs ========
+ */
+void doEventLogs(void)
+{
+    uint8_t event;
+    while(RingBuf_get(&ringObj, &event) >= 0)
+    {
+        if(event & Button_EV_CLICKED)
+        {
+            Display_print0(display, 0, 0, "Button:Click");
+        }
+        if(event & Button_EV_DOUBLECLICKED)
+        {
+            Display_print0(display, 0, 0, "Button:Double Click");
+        }
+        if(event & Button_EV_LONGPRESSED)
+        {
+            Display_print0(display, 0, 0, "Button:Long Pressed");
+        }
+    }
+}
+
+/*
+ *  ======== handleButtonCallback ========
+ */
+void handleButtonCallback(Button_Handle handle, Button_EventMask events)
+{
+    uint_least8_t ledIndex = (buttonHandle[CONFIG_BUTTON_0] == handle) ?
+                              CONFIG_LED_0 : CONFIG_LED_1;
+    LED_Handle led = ledHandle[ledIndex];
+
+    if(Button_EV_PRESSED == (events & Button_EV_PRESSED))
+    {
+        bStats.pressed++;
+    }
+
+    if(Button_EV_RELEASED == (events & Button_EV_RELEASED))
+    {
+        bStats.released++;
+    }
+
+    if(Button_EV_CLICKED == (events & Button_EV_CLICKED))
+    {
+        bStats.clicked++;
+        bStats.lastpressedduration =
+                Button_getLastPressedDuration(handle);
+
+        /* Put event in ring buffer for printing */
+        RingBuf_put(&ringObj, events);
+
+        if(LED_STATE_BLINKING == LED_getState(led))
+        {
+            LED_stopBlinking(led);
+            LED_setOff(led);
+        }
+        else
+        {
+            LED_toggle(led);
+        }
+    }
+
+    if(Button_EV_LONGPRESSED == (events & Button_EV_LONGPRESSED))
+    {
+        bStats.longPress++;
+
+        /* Put event in ring buffer for printing */
+        RingBuf_put(&ringObj, events);
+
+        LED_startBlinking(led, SLOWBLINK, LED_BLINK_FOREVER);
+    }
+
+    if(Button_EV_LONGCLICKED == (events & Button_EV_LONGCLICKED))
+    {
+        bStats.longClicked++;
+        bStats.lastpressedduration = Button_getLastPressedDuration(handle);
+        LED_stopBlinking(led);
+    }
+
+    if(Button_EV_DOUBLECLICKED == (events & Button_EV_DOUBLECLICKED))
+    {
+        bStats.doubleclicked++;
+
+        /* Put event in ring buffer for printing */
+        RingBuf_put(&ringObj, events);
+
+        if(LED_STATE_BLINKING != LED_getState(led))
+        {
+            LED_startBlinking(led, FASTBLINK, BLINKCOUNT);
+        }
+        else
+        {
+            LED_stopBlinking(led);
+            LED_setOff(led);
+        }
+    }
+}
+
+/*
+ *  ======== mainThread ========
+ */
+void *mainThread(void *arg0)
+{
+    int inc;
+    bool dir = true;
+
+    Button_Params  buttonParams;
+    LED_Params     ledParams;
+
+    GPIO_init();
+    Button_init();
+    LED_init();
+
+    /* Create ring buffer to store button events */
+    RingBuf_construct(&ringObj, eventBuf, EVENTBUFSIZE);
+
+    /* Open the UART display for output */
+    display = Display_open(Display_Type_UART, NULL);
+    if(display == NULL)
+    {
+        while(1);
+    }
+
+    Display_print0(display, 0, 0, "Button/LED Demo:\n"
+                   "Each button controls an LED. Click to toggle, "
+                   "double click to fast blink three times, "
+                   "hold the button to slow blink.\n");
+
+    /* Open button 1 and button 2 */
+    Button_Params_init(&buttonParams);
+    buttonHandle[CONFIG_BUTTON_0] = Button_open(CONFIG_BUTTON_0,
+                                              handleButtonCallback,
+                                              &buttonParams);
+    buttonHandle[CONFIG_BUTTON_1] = Button_open(CONFIG_BUTTON_1,
+                                              handleButtonCallback,
+                                              &buttonParams);
+
+    /* Check if the button open is successful */
+    if((buttonHandle[CONFIG_BUTTON_1]  == NULL) ||
+        (buttonHandle[CONFIG_BUTTON_0]  == NULL))
+    {
+        Display_print0(display, 0, 0, "Button Open Failed!");
+    }
+
+    /* Open LED0 and LED1 with default params */
+    LED_Params_init(&ledParams);
+    ledHandle[CONFIG_LED_0] = LED_open(CONFIG_LED_0, &ledParams);
+    ledHandle[CONFIG_LED_1] = LED_open(CONFIG_LED_1, &ledParams);
+    if((ledHandle[CONFIG_LED_0] == NULL) || (ledHandle[CONFIG_LED_1] == NULL))
+    {
+        Display_print0(display, 0, 0, "LED Open Failed!");
+    }
+
+#if CONFIG_LEDCOUNT > 2
+    /* Open a PWM LED if our board has one */
+    ledParams.setState = LED_STATE_ON;
+    ledHandle[CONFIG_LED_2] = LED_open(CONFIG_LED_2, &ledParams);
+    if(ledHandle[CONFIG_LED_2] == NULL)
+    {
+        Display_print0(display, 0, 0, "PWM LED Open Failed!");
+    }
+#endif
+
+
+    while(1)
+    {
+
+        /* Does a "heart beat" effect for the PWM LED if we opened one */
+        for(inc = 0; inc < 100; inc += 5)
+        {
+#if CONFIG_LEDCOUNT > 2
+            int duty;
+            if(dir)
+            {
+                duty = inc;
+            }
+            else
+            {
+                duty = 100 - inc;
+            }
+            LED_setOn(ledHandle[CONFIG_LED_2], duty);
+#endif
+
+            /* Print out button events */
+            doEventLogs();
+            usleep(FIFTYMS);
+        }
+        dir = !dir;
+    }
+}
+```
+
+### init
+
+我们从主程序看过去，首先是三个init，作用我们基本已经很熟了，配置环境实现代码间移植。
+
+### RingBuf_construct
+
+这个是初始化环形缓冲区的函数，环形缓冲区是一个数据结构，如果学过数据结构课的应该知道这个的功能，这里它不是主要的，不细讲，不懂的请自行百度，简单点意思就是它创建了一个首位相接的数组，其中eventBuf是指向这个环形缓冲区数据部分的指针，而reingObj则是一个句柄结构体。
+
+### Display_open
+
+这个Display是用于数据显示功能的，这里它的显示方式是Display_Type_UART，也就是串口打印。它类似于我们之前对UART的printf封装，但是又更加丰富，因为除了通过串口，它还可以通过LCD屏幕等方式进行输出显示，只需要选择好对应的封装配置就行。关于Display的功能我还没完全弄懂，且不为本节重点，故之后再说。
+
+后面跟了一个检测是否出错，未来这种检测语句我不再提示。
+
+### Display_print
+
+打印功能，注意这里的参数虽然很多行而且引号是分开打的，但是对于C语言来说，这种中间没有其它逗号分号连接的字符串，本质上是连接在一起的，也就是说这几行会被当作一行字符串来处理。它的功能就是输出打印。它是根据Display_doPrintf的封装而来，其中第二个和第三个参数是显示0行0列。
+
+### Button_Params_init
+
+参数初始化，设置默认参数，点进去查看注释，主要是修改了消抖时间10ms、长按检测时间2000ms、按钮事件掩码0xFF。可以根据实际需求进行修改，不过一般这个数值是比较理想的。
+
+### Button_open
+
+开启按键，主要是开启了按键的事件，注意里面的除了index和最后的params，中间那个就是回调函数，可以点进去发现是在我们当前文件的前面。
+
+### LED_Params_init
+
+LED参数配置，默认LED以关闭形式初始化，闪烁周期为0，最大亮度（仅适用于PWM LED）和PWM周期（仅适用于PWM LED）。关于不知道PWM的我在前面提到过，想了解更多的可以自行百度。
+
+### LED_open
+
+开启LED，这个没有回调了
+
+### Display_print0
+
+带有0个参数的打印，同理是Display_doPrintf的封装。
+
+### 后续配置
+
+后面是配置了另一个LED灯，这个灯初始化状态为开启，该函数仅在有超过两个LED灯的板子上运行，对于我们这个板子，很显然是符合的。这些配置在ti_drivers_config中。
+
+### while(1)
+
+当上述配置完成后，就开始运行主程序了（事实上中断在前面就开始了，但是因为运行速度比较快，故当我们感知到的时候他已经完成了配置）
+
+在主循环中执行的是一个简易的PWM呼吸灯程序。在其中执行了一个doEventLogs，这种带Logs的程序一看就是日志程序，事实也是如此，我们点进去查看会发现他从环形缓存中不断地读取状态值，这个状态值也是在Button.h中有宏定义的。
+
+但是这个状态值从哪来的呢？我们知道环形缓存本质上只是一个缓存空间，那么它的数据来自哪？从日志内容其实我们也可以知道，肯定来自于回调函数了。
+
+### 回调函数
+
+回调函数中开头先进行了一个三元运算，去判断此次按键是哪个被按下了，那么它就控制哪一个led的句柄。
+
+然后就是通过events参数去判断具体的按键状态，事实上如果把这些状态宏定义点进去你也会发现这些其实是一堆8421的数据，也就是说通过与运算可以获取每位信息。
+
+-   **Button_getLastPressDuration**
+
+    这个函数会获取上一次按下的持续时间，用于判断上次按下的持续时间，不过没看懂他在这放个这个有啥用。
+
+然后再回到程序中，我们发现在click这，程序把event装载到了环形缓存中。然后判断了一下LED是不是在Blink闪烁状态，如果是则停止闪烁，换成关闭。如果不是闪烁则直接翻转。
+
+接下来是判断长按，如果处于长按则开始闪烁。
+
+然后是判断一个叫LONGCLICK的状态，通过点进去查看注释我大概了解到它的功能应该是点击一下然后长按。这个状态就是停止闪烁。
+
+接下来是双击判断，这个状态会开启闪烁，闪烁速度为快，闪烁次数为3。
+
+## 测试
+
+GPIO的相关知识大概就是如此了，现在你依靠这些知识可以实现很多功能了，那么不如来尝试一下把我前面所说的BSP封装以Button和LED的库进行更加高级的封装吧，注意这里的回调不同按键其实是可以使用不同的函数哦，不一定非要像他那种用一个函数弄出来。
