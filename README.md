@@ -22,6 +22,10 @@
 
 [SPI](./doc/SPI.md)
 
+[I2C](./doc/I2C.md)
+
+
+
 ##### 协议
 
 本项目遵守GPL协议
