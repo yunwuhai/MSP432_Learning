@@ -33,6 +33,7 @@ SD_getSectorSize：获取扇区大小
 
 -   SDFatFs_init：初始化
 -   SDFatFS_open：开启
+-   FatFS的文件操作
 -   SDFatFs_close：关闭
 
 ## FatFS的使用

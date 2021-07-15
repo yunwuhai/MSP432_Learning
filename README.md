@@ -26,7 +26,9 @@
 
 [SD](./doc/SD.md)
 
+[ADC](./doc/ADC.md)
 
+[Capture](./doc/Capture.md)
 
 ##### 协议
 
