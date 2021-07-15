@@ -30,6 +30,8 @@
 
 [Capture](./doc/Capture.md)
 
+[POWER](./doc/POWER)
+
 ##### 协议
 
 本项目遵守GPL协议
